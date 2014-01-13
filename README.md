@@ -21,7 +21,11 @@ password with URL containing all three like this:
 
 Dependencies
 -------
-This tool depends on PHP 5.x with lib cURL installed
+This tool depends on PHP 5.x with lib cURL installed (+ the pecl tool depends the installation of the php-pear package)
 To install this on an debian/ubuntu machine, type
 
-    apt-get install php5 php5-curl
+    sudo apt-get install php5 php5-curl php-pear
+
+It also depends the mongo db extension for php
+
+    sudo pecl install mongo
