@@ -18,3 +18,10 @@ database. In order to that you need to specify the MongoDB url, user and
 password with URL containing all three like this:
 
     export CIP_DAEMON_MONGODB_URL='mongodb://username:password@mongo.example.org:port'
+
+Dependencies
+-------
+This tool depends on PHP 5.x with lib cURL installed
+To install this on an debian/ubuntu machine, type
+
+    apt-get install php5 php5-curl
