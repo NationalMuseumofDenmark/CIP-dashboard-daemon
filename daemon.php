@@ -6,7 +6,7 @@ mb_internal_encoding('UTF-8');
 mb_http_output('UTF-8');
 
 
-class CIPAnalysisDaemon {
+class CIPDashboardDaemon {
 
   const MAX_VALUES = 100;
   const CATALOG = 'FHM';
@@ -81,7 +81,7 @@ class CIPAnalysisDaemon {
 
   public static function constructWithUserPassword($cip_endpoint, $cip_user, $cip_password) {
     $cip_client = new CIPClient($cip_endpoint, true, $cip_user, $cip_password);
-    $cip_daemon = new CIPAnalysisDaemon($cip_client);
+    $cip_daemon = new CIPDashboardDaemon($cip_client);
     return $cip_daemon;
   }
 

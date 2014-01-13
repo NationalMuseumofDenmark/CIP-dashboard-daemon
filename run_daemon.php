@@ -6,7 +6,7 @@ if (!(getenv('CIP_ENDPOINT') && getenv('CIP_USER') && getenv('CIP_PASSWORD'))) {
         CIP_ENDPOINT, CIP_USER and CIP_PASSWORD.';
 } else {
   error_log('Instantiating daemon...');
-  $daemon = CIP\CIPAnalysisDaemon::constructWithUserPassword(getenv('CIP_ENDPOINT'), getenv('CIP_USER'), getenv('CIP_PASSWORD'));
+  $daemon = CIP\CIPDashboardDaemon::constructWithUserPassword(getenv('CIP_ENDPOINT'), getenv('CIP_USER'), getenv('CIP_PASSWORD'));
 
   error_log('Running daemon...');
   $daemon->run();
