@@ -58,7 +58,7 @@ class CIPAnalysisDaemon {
 
 
     if (!getenv("CIP_DAEMON_MONGODB_URL")) {
-      error_log('CIP-dashboard-daemon: You need to set the `CIP_DAEMON_MONGODB_URL` enviroment variable in order to save your results');
+      error_log('CIP-dashboard-daemon: You need to set the `CIP_DAEMON_MONGODB_URL` enviroment variable in order to save your results to a MongoDB that is not on localhost.\nAssuming a MongoDB is setup on localhost.');
     } else {
       $m = new \MongoClient(getenv("CIP_DAEMON_MONGODB_URL"));
     }
