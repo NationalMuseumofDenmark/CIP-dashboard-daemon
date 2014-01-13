@@ -1,0 +1,8 @@
+{
+  "layout": "statistics_layout",
+  "all_catalogs_label": "All catalogs",
+  "catalogs": {
+    "My catalog name": "mycatalogalias1",
+    "Ye olde catalog": "ye-olde-catalog-alias"
+  }
+}

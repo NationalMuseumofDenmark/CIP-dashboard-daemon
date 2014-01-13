@@ -9,14 +9,13 @@ mb_http_output('UTF-8');
 class CIPDashboardDaemon {
 
   const MAX_VALUES = 100;
-  const CATALOG = 'FHM';
-  const LAYOUT = 'web';
 
   protected $_cip_client;
+  protected $_settings;
   protected $_plugins = array();
   protected $_value_transformers = array();
   protected $_derived_fields = array();
-  protected $_stop_after = 500;
+  protected $_stop_after = NULL;
 
   public $skip_fields = array('name', 'id');
 
@@ -38,6 +37,16 @@ class CIPDashboardDaemon {
   }
 
   public function __construct($cip_client) {
+    $json_settings_str = file_get_contents('conf.json');
+    if ($json_settings_str  === FALSE) {
+      throw new \Exception('You must create and fill out the configuration file `conf.json`.');
+    }
+
+    $this->_settings = json_decode($json_settings_str, TRUE);
+    if ($this->_settings === NULL) {
+      throw new \Exception('The configuration file `conf.json` could not be understood.');
+    }
+
     $this->_cip_client = $cip_client;
 
     if (getenv('CIP_DAEMON_STOP_AFTER') && is_numeric(getenv('CIP_DAEMON_STOP_AFTER'))) {
@@ -90,12 +99,13 @@ class CIPDashboardDaemon {
   /**
    * This function sets up the $stats array
    */
-  protected function _setupLayout($catalog, $layout) {
-    $layout = $this->_cip_client->metadata()->getlayout($catalog, $layout);
+  protected function _setupLayout($catalog_alias, $layout_name) {
+    $catalog_layout = $this->_cip_client->metadata()->getlayout($catalog_alias,
+                                                                $layout_name);
 
     // Add derived fields to layout
     foreach ($this->_derived_fields as $derived_field_plugin) {
-      $layout['fields'][] = array(
+      $catalog_layout['fields'][] = array(
         'key' => $derived_field_plugin->getUUID(),
         'name' => $derived_field_plugin->getFieldName(),
         'derived_field' => TRUE
@@ -104,158 +114,197 @@ class CIPDashboardDaemon {
 
     // Setup stats array
     $name_to_uid = array();
-    $stats = array();
-    foreach ($layout['fields'] as $field) {
+    $catalog_stats = array();
+
+    foreach ($catalog_layout['fields'] as $field) {
       $uid = $field['key'];
-      $stats[$uid] = array();
-      $stats[$uid]['name'] = $field['name'];
-      $stats[$uid]['type'] = 'Values';
-      $stats[$uid]['values'] = array();
-      $stats[$uid]['empty_values'] = 0;
-      $stats[$uid]['zero_length_values'] = 0;
-      // $stats[$uid]['max_value_count'] = -1;
-      // $stats[$uid]['max_value'] = '';
+      $catalog_stats[$uid] = array();
+      $catalog_stats[$uid]['name'] = $field['name'];
+      // $catalog_stats[$uid]['type'] = 'Values';
+      $catalog_stats[$uid]['type'] = (isset($field['type'])) ? $field['type'] : NULL;
+      $catalog_stats[$uid]['values'] = array();
+      $catalog_stats[$uid]['empty_values'] = 0;
+      $catalog_stats[$uid]['zero_length_values'] = 0;
+      $catalog_stats[$uid]['unprocessed_values'] = 0;
+      // $catalog_stats[$uid]['max_value_count'] = -1;
+      // $catalog_stats[$uid]['max_value'] = '';
       if (isset($field['type']) && $field['type'] === 'Enum') {
         // Transform array values (these are enums)
         // TODO: I'm not sure this is the best way to do it
-        $stats[$uid]['transform'] = $this->_value_transformers['EnumTransformer'];
+        $catalog_stats[$uid]['transform'] = $this->_value_transformers['EnumTransformer'];
       } else {
-        $stats[$uid]['transform'] = null;
+        $catalog_stats[$uid]['transform'] = null;
       }
 
       $name_to_uid[$field['name']] = $uid;
     }
 
-    return array($layout, $stats);
+    return array($catalog_stats, $catalog_layout);
   }
 
 
   public function run($page_size = 100) {
-    list($layout, $stats) = $this->_setupLayout(self::CATALOG, self::LAYOUT);
 
-    // I hate do-while as much as the next guy (it has bad readability),
-    // but it really is the most logical choice here since the `totalcount`
-    // isn't known beforehand.
-    $assetcount = 0;
-    $current_index = 0;
-    do {
-      $from = $current_index;
-      $to = $current_index+$page_size;
-      echo "Fetching assets $from...$to\n";
+    $all_total_count = 0;
+    $all_processed_count = 0;
+    list($all_stats, $all_layout) = $this->_setupLayout(reset($this->_settings['catalogs']),
+                                                        $this->_settings['layout']);
 
-      // Fetch results from CIP
-      // ----------------------
-      // The `searchstring` used here searches for all where `Record Name` is
-      // either empty or not empty, i.e. it searches for everything
-      //
-      // '"Record Name" * or "Record Name" !*'
-      //
-      $result = $this->_cip_client->metadata()->search(
-        self::CATALOG,
-        self::LAYOUT,
-        null,
-        null,
-        '"Record Name" * or "Record Name" !*',
-        $current_index,
-        $page_size
-      );
+    foreach ($this->_settings['catalogs'] as $catalog_name => $catalog_alias) {
+      $catalog_processed_count = 0;
 
-      $totalcount = $result['totalcount'];
+      list($catalog_stats, $catalog_layout) =
+        $this->_setupLayout($catalog_alias, $this->_settings['layout']);
 
-      foreach ($result['items'] as $asset) {
-        $assetcount += 1;
+      error_log("Producing stats for catalog \"$catalog_name\".");
 
-        // PLUGINS: Add derived fields
-        foreach ($this->_derived_fields as $derived_field_plugin) {
-          $new_field = $derived_field_plugin->createField($asset);
-          // Add field to asset
-          $asset = array_merge($asset, $new_field);
+      // I hate do-while as much as the next guy (it has bad readability),
+      // but it really is the most logical choice here since the `total_count`
+      // isn't known beforehand.
+      $current_index = 0;
+      do {
+        $from = $current_index;
+        $to = $current_index+$page_size;
+        echo "Fetching assets $from...$to\n";
+
+        // Fetch results from CIP
+        // ----------------------
+        // The `searchstring` used here searches for all where `Record Name` is
+        // either empty or not empty, i.e. it searches for everything
+        //
+        // '"Record Name" * or "Record Name" !*'
+        //
+        $result = $this->_cip_client->metadata()->search(
+          $catalog_alias,
+          $this->_settings['layout'],
+          null,
+          null,
+          '"Record Name" * or "Record Name" !*',
+          $current_index,
+          $page_size
+        );
+
+        $catalog_total_count = $result['totalcount'];
+
+        foreach ($result['items'] as $asset) {
+
+          // PLUGINS: Add derived fields
+          foreach ($this->_derived_fields as $derived_field_plugin) {
+            $new_field = $derived_field_plugin->createField($asset);
+            // Add field to asset
+            $asset = array_merge($asset, $new_field);
+          }
+
+          foreach ($asset as $uid => $value) {
+            // Add to the "ALL" catalog
+            $this->addAssetToCatalog($all_stats, $all_layout, $uid, $value);
+            // Add to the current catalog
+            $this->addAssetToCatalog($catalog_stats, $catalog_layout, $uid, $value);
+          }
+          $catalog_processed_count += 1;
         }
 
-        foreach ($asset as $uid => $value) {
-          // if (in_array($uid, $this->skip_fields) { continue; }
+        $current_index += $page_size;
+      } while ($current_index < $catalog_total_count &&
+               ($this->_stop_after === NULL || $current_index < $this->_stop_after));
 
+      $this->catalogs[$catalog_alias]['name'] = $catalog_name;
+      $this->catalogs[$catalog_alias]['stats'] = $catalog_stats;
+      $this->catalogs[$catalog_alias]['layout'] = $catalog_layout;
+      $this->catalogs[$catalog_alias]['total_count'] = $catalog_total_count;
+      $this->catalogs[$catalog_alias]['processed_count'] = $catalog_processed_count;
 
-          // TODO: Hash value so that the key in the `values` array will be
-          // $hash = md5(serialize($value);
-          // $stats[$uid]['values'][$hash] = array($value, $count);
+      $all_processed_count += $catalog_processed_count;
+      $all_total_count += $catalog_total_count;
+    }
 
-          // Found a UUID which was not in the layout
-          if (!isset($stats[$uid])) {
-            error_log("Field `$uid` was not found in layout.");
-            $stats[$uid] = array();
-            $stats[$uid]['name'] = $uid;
-            $stats[$uid]['values'] = array();
-            $stats[$uid]['empty_values'] = 0;
-            $stats[$uid]['zero_length_values'] = 0;
-          }
+    $this->catalogs['ALL']['name'] = $this->_settings['all_catalogs_label'];
+    $this->catalogs['ALL']['stats'] = $all_stats;
+    $this->catalogs['ALL']['layout'] = $all_layout;
+    $this->catalogs['ALL']['total_count'] = $all_total_count;
+    $this->catalogs['ALL']['processed_count'] = $all_processed_count;
+  }
 
-          // If NULL
-          if (is_null($value)) {
-            $stats[$uid]['empty_values'] += 1;
-            continue;
-          }
+  protected function addAssetToCatalog(&$catalog_stats, &$catalog_layout, $uid, $value) {
+    // if (in_array($uid, $this->skip_fields) { return; }
 
-          // If empty string
-          if (is_string($value) && mb_strlen($value) === 0) {
-            $stats[$uid]['zero_length_values'] += 1;
-            continue;
-          }
+    // TODO: Hash value so that the key in the `values` array will be
+    // $hash = md5(serialize($value);
+    // $catalog_stats[$uid]['values'][$hash] = array($value, $count);
 
-          // PLUGINS: Transform value
-          if (isset($stats[$uid]['transform']) && $stats[$uid]['transform'] !== null) {
-            $value = $stats[$uid]['transform']->transform($value);
-            if ($value === NULL) {
-              echo 'transform error in: ' . $stats[$uid]['name'];
-            }
-          }
+    // Found a UUID which was not in the layout
+    if (!isset($catalog_stats[$uid])) {
+      error_log("Field `$uid` was not found in layout.");
+      $catalog_stats[$uid] = array();
+      $catalog_stats[$uid]['name'] = $uid;
+      $catalog_stats[$uid]['type'] = 'string';
+      $catalog_stats[$uid]['values'] = array();
+      $catalog_stats[$uid]['empty_values'] = 0;
+      $catalog_stats[$uid]['zero_length_values'] = 0;
+      $catalog_stats[$uid]['unprocessed_values'] = 0;
+    }
 
+    // If NULL
+    if (is_null($value)) {
+      $catalog_stats[$uid]['empty_values'] += 1;
+      return FALSE;
+    }
 
-          // Transform boolean values
-          if (is_bool($value)) {
-            $value = $this->_value_transformers['BoolTransformer']->transform($value);
-          }
+    // If empty string
+    if (is_string($value) && mb_strlen($value) === 0) {
+      $catalog_stats[$uid]['zero_length_values'] += 1;
+      return FALSE;
+    }
 
-          // PHP array indices must be integers or strings
-          if (!is_numeric($value) && !is_string($value)) { continue; }
-
-          // New value or already existing value?
-          if (isset($stats[$uid]['values'][$value])) {
-            $stats[$uid]['values'][$value] += 1;
-          } else {
-            $stats[$uid]['values'][$value] = 1;
-          }
-
-          // if ($stats[$uid]['values'][$value] > $stats[$uid]['max_value']) {
-          //   $stats[$uid]['max_value_count'] = $stats[$uid]['values'][$value];
-          //   $stats[$uid]['max_value'] = $value;
-          // }
-
-          // If the number of unique values of a field is too high
-          // it is transformed by the LengthTransformer
-          if (count($stats[$uid]['values']) > self::MAX_VALUES) {
-            echo "Too many different values in `{$stats[$uid]['name']}`.";
-            echo " Changing to length statistics\n";
-            $stats[$uid]['transform'] = $this->_value_transformers['LengthTransformer'];
-
-            $temp_array = array();
-            foreach ($stats[$uid]['values'] as $key => $value) {
-              $stats[$uid]['type'] = $stats[$uid]['transform']->getType();
-              $transformed_key = $stats[$uid]['transform']->transform($key);
-              $temp_array[$transformed_key] = $value;
-            }
-            $stats[$uid]['values'] = $temp_array;
-          }
-        }
-
+    // PLUGINS: Transform value
+    if (isset($catalog_stats[$uid]['transform']) && $catalog_stats[$uid]['transform'] !== null) {
+      $value = $catalog_stats[$uid]['transform']->transform($value);
+      if ($value === NULL) {
+        echo 'transform error in: ' . $catalog_stats[$uid]['name'];
       }
+    }
 
-      $current_index += $page_size;
-    } while($current_index < $totalcount && $current_index < $this->_stop_after);
 
-    $this->stats = $stats;
-    $this->layout = $layout;
-    $this->assetcount = $assetcount;
+    // Transform boolean values
+    if (is_bool($value)) {
+      $value = $this->_value_transformers['BoolTransformer']->transform($value);
+    }
+
+    // PHP array indices must be integers or strings
+    if (!is_numeric($value) && !is_string($value)) {
+      $catalog_stats[$uid]['unprocessed_values'] += 1;
+      return FALSE;
+    }
+
+    // New value or already existing value?
+    if (isset($catalog_stats[$uid]['values'][$value])) {
+      $catalog_stats[$uid]['values'][$value] += 1;
+    } else {
+      $catalog_stats[$uid]['values'][$value] = 1;
+    }
+
+    // if ($catalog_stats[$uid]['values'][$value] > $catalog_stats[$uid]['max_value']) {
+    //   $catalog_stats[$uid]['max_value_count'] = $catalog_stats[$uid]['values'][$value];
+    //   $catalog_stats[$uid]['max_value'] = $value;
+    // }
+
+    // If the number of unique values of a field is too high
+    // it is transformed by the LengthTransformer
+    if (count($catalog_stats[$uid]['values']) > self::MAX_VALUES && $catalog_stats[$uid]['type'] == 'string') {
+      $catalog_stats[$uid]['type'] = 'int';
+      echo "Too many different values in `{$catalog_stats[$uid]['name']}`.";
+      echo "Changing to length statistics\n";
+      $catalog_stats[$uid]['transform'] = $this->_value_transformers['LengthTransformer'];
+
+      $temp_array = array();
+      foreach ($catalog_stats[$uid]['values'] as $key => $value) {
+        $catalog_stats[$uid]['type'] = $catalog_stats[$uid]['transform']->getType();
+        $transformed_key = $catalog_stats[$uid]['transform']->transform($key);
+        $temp_array[$transformed_key] = $value;
+      }
+      $catalog_stats[$uid]['values'] = $temp_array;
+    }
+    return TRUE;
   }
 
   public function save() {
@@ -266,9 +315,7 @@ class CIPDashboardDaemon {
     $collection = $db->cip_stats;
 
     $document = array(
-      'stats' => $this->stats,
-      'layout' => $this->layout,
-      'totalcount' => $this->assetcount
+      'catalogs' => $this->catalogs,
     );
 
     file_put_contents('daemon-dump.txt', print_r($document, TRUE));

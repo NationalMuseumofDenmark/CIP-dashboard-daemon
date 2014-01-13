@@ -14,13 +14,25 @@ credentials for your CIP. You can then run the daemon with `php run_daemon.php`.
     php run_daemon.php
 
 The daemon will by default save the result (statistics and layout) to a MongoDB
-database. In order to that you need to specify the MongoDB url, user and
+database. In order to do that you need to specify the MongoDB url, user and
 password with URL containing all three like this:
 
     export CIP_DAEMON_MONGODB_URL='mongodb://username:password@mongo.example.org:port'
 
+You do not need to specify this if your MongoDB is running on the same machine
+(`localhost`).
+
+### Specifying catalog aliases
+The dashboard daemon needs to know the aliases of the catalogs you are want
+statistics on, and you must specify a layout to use. You should specify these in
+a file called `conf.json`. An example config is provided in `conf.example.json`.
+
+A pseudo-catalog containing combined statistics for all the catalogs you have
+specified will be saved with a catalog alias of `ALL` and the with the name
+specified under `all_catalogs_label` in `conf.json`.
+
 Dependencies
--------
+------------
 This tool depends on PHP 5.x with lib cURL installed (+ the pecl tool depends the installation of the php-pear package)
 To install this on an debian/ubuntu machine, type
 
