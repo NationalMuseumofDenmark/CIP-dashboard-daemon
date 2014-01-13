@@ -1,7 +1,7 @@
 <?php
 require_once 'daemon.php';
 
-if (!(getenv('CIP_ENDPOINT') && getenv('CIP_USER') && getenv('CIP_USER'))) {
+if (!(getenv('CIP_ENDPOINT') && getenv('CIP_USER') && getenv('CIP_PASSWORD'))) {
   echo 'You need to set the CIP url, user and password in the environment variables
         CIP_ENDPOINT, CIP_USER and CIP_PASSWORD.';
 } else {
