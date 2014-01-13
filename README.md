@@ -29,3 +29,7 @@ To install this on an debian/ubuntu machine, type
 It also depends the mongo db extension for php
 
     sudo pecl install mongo
+
+If you are deploying with a localhost mongo db, you need the mongodb daemon as well
+
+    sudo apt-get install mongodb-server
