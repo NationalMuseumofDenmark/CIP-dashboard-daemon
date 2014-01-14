@@ -290,7 +290,7 @@ class CIPDashboardDaemon {
 
     // If the number of unique values of a field is too high
     // it is transformed by the LengthTransformer
-    if (count($catalog_stats[$uid]['values']) > self::MAX_VALUES && $catalog_stats[$uid]['type'] == 'string') {
+    if (count($catalog_stats[$uid]['values']) > self::MAX_VALUES && $catalog_stats[$uid]['transform'] === NULL) {
       $catalog_stats[$uid]['type'] = 'int';
       echo "Too many different values in `{$catalog_stats[$uid]['name']}`.";
       echo "Changing to length statistics\n";
