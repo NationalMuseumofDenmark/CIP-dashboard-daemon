@@ -315,7 +315,10 @@ class CIPDashboardDaemon {
     $collection = $db->cip_stats;
 
     $document = array(
-      'catalogs' => $this->catalogs,
+      'timestamp' => new \MongoDate(), // save current time
+      'data_version' => '3', // this is a running number incremented by one
+                             // every time the structure of $document changes
+      'catalogs' => $this->catalogs
     );
 
     file_put_contents('daemon-dump.txt', print_r($document, TRUE));
