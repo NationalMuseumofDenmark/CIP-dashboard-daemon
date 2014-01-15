@@ -8,6 +8,7 @@ mb_http_output('UTF-8');
 
 class CIPDashboardDaemon {
 
+  const DATA_VERSION = 3;
   const MAX_VALUES = 100;
 
   protected $_cip_client;
@@ -316,8 +317,10 @@ class CIPDashboardDaemon {
 
     $document = array(
       'timestamp' => new \MongoDate(), // save current time
-      'data_version' => '3', // this is a running number incremented by one
-                             // every time the structure of $document changes
+
+      // data_version is a running number incremented by one
+      // every time the structure of $document changes
+      'data_version' => CIPDashboardDaemon::DATA_VERSION,
       'catalogs' => $this->catalogs
     );
 
