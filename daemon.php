@@ -8,7 +8,7 @@ mb_http_output('UTF-8');
 
 class CIPDashboardDaemon {
 
-  const DATA_VERSION = 3;
+  const DATA_VERSION = 4;
   const MAX_VALUES = 100;
 
   protected $_cip_client;
@@ -38,14 +38,23 @@ class CIPDashboardDaemon {
   }
 
   public function __construct($cip_client) {
+    // Read settings from file
     $json_settings_str = file_get_contents('conf.json');
     if ($json_settings_str  === FALSE) {
       throw new \Exception('You must create and fill out the configuration file `conf.json`.');
     }
 
+    // Parse settings as JSON
     $this->_settings = json_decode($json_settings_str, TRUE);
     if ($this->_settings === NULL) {
       throw new \Exception('The configuration file `conf.json` could not be understood.');
+    }
+
+    // Set default queries
+    if (!isset($this->_settings['queries'])) {
+      $this->_settings['queries'] = array(
+        "ALL" => "\"Record Name\" * or \"Record Name\" !*"
+      );
     }
 
     $this->_cip_client = $cip_client;
@@ -146,84 +155,89 @@ class CIPDashboardDaemon {
 
   public function run($page_size = 100) {
 
-    $all_total_count = 0;
-    $all_processed_count = 0;
-    list($all_stats, $all_layout) = $this->_setupLayout(reset($this->_settings['catalogs']),
-                                                        $this->_settings['layout']);
 
-    foreach ($this->_settings['catalogs'] as $catalog_name => $catalog_alias) {
-      $catalog_processed_count = 0;
+    foreach ($this->_settings['queries'] as $query_name => $query) {
 
-      list($catalog_stats, $catalog_layout) =
-        $this->_setupLayout($catalog_alias, $this->_settings['layout']);
+      $all_total_count = 0;
+      $all_processed_count = 0;
+      list($all_stats, $all_layout) = $this->_setupLayout(reset($this->_settings['catalogs']),
+                                                          $this->_settings['layout']);
 
-      error_log("Producing stats for catalog \"$catalog_name\".");
+      foreach ($this->_settings['catalogs'] as $catalog_name => $catalog_alias) {
+        $catalog_processed_count = 0;
 
-      // I hate do-while as much as the next guy (it has bad readability),
-      // but it really is the most logical choice here since the `total_count`
-      // isn't known beforehand.
-      $current_index = 0;
-      do {
-        $from = $current_index;
-        $to = $current_index+$page_size;
-        echo "Fetching assets $from...$to\n";
+        list($catalog_stats, $catalog_layout) =
+          $this->_setupLayout($catalog_alias, $this->_settings['layout']);
 
-        // Fetch results from CIP
-        // ----------------------
-        // The `searchstring` used here searches for all where `Record Name` is
-        // either empty or not empty, i.e. it searches for everything
-        //
-        // '"Record Name" * or "Record Name" !*'
-        //
-        $result = $this->_cip_client->metadata()->search(
-          $catalog_alias,
-          $this->_settings['layout'],
-          null,
-          null,
-          '"Record Name" * or "Record Name" !*',
-          $current_index,
-          $page_size
-        );
+        error_log("Producing stats for catalog \"$catalog_name\".");
 
-        $catalog_total_count = $result['totalcount'];
+        // I hate do-while as much as the next guy (it has bad readability),
+        // but it really is the most logical choice here since the `total_count`
+        // isn't known beforehand.
+        $current_index = 0;
+        do {
+          $from = $current_index;
+          $to = $current_index+$page_size;
+          echo "Fetching assets $from...$to\n";
 
-        foreach ($result['items'] as $asset) {
+          // Fetch results from CIP
+          // ----------------------
+          // The `searchstring` used here searches for all where `Record Name` is
+          // either empty or not empty, i.e. it searches for everything
+          //
+          // '"Record Name" * or "Record Name" !*'
+          //
+          $result = $this->_cip_client->metadata()->search(
+            $catalog_alias,
+            $this->_settings['layout'],
+            null,
+            null,
+            $query,
+            $current_index,
+            $page_size
+          );
 
-          // PLUGINS: Add derived fields
-          foreach ($this->_derived_fields as $derived_field_plugin) {
-            $new_field = $derived_field_plugin->createField($asset);
-            // Add field to asset
-            $asset = array_merge($asset, $new_field);
+          $catalog_total_count = $result['totalcount'];
+
+          foreach ($result['items'] as $asset) {
+
+            // PLUGINS: Add derived fields
+            foreach ($this->_derived_fields as $derived_field_plugin) {
+              $new_field = $derived_field_plugin->createField($asset);
+              // Add field to asset
+              $asset = array_merge($asset, $new_field);
+            }
+
+            foreach ($asset as $uid => $value) {
+              // Add to the "ALL" catalog
+              $this->addAssetToCatalog($all_stats, $all_layout, $uid, $value);
+              // Add to the current catalog
+              $this->addAssetToCatalog($catalog_stats, $catalog_layout, $uid, $value);
+            }
+            $catalog_processed_count += 1;
           }
 
-          foreach ($asset as $uid => $value) {
-            // Add to the "ALL" catalog
-            $this->addAssetToCatalog($all_stats, $all_layout, $uid, $value);
-            // Add to the current catalog
-            $this->addAssetToCatalog($catalog_stats, $catalog_layout, $uid, $value);
-          }
-          $catalog_processed_count += 1;
-        }
+          $current_index += $page_size;
+        } while ($current_index < $catalog_total_count &&
+                 ($this->_stop_after === NULL || $current_index < $this->_stop_after));
 
-        $current_index += $page_size;
-      } while ($current_index < $catalog_total_count &&
-               ($this->_stop_after === NULL || $current_index < $this->_stop_after));
+        $this->stats[$query_name][$catalog_alias]['name'] = $catalog_name;
+        $this->stats[$query_name][$catalog_alias]['stats'] = $catalog_stats;
+        $this->stats[$query_name][$catalog_alias]['layout'] = $catalog_layout;
+        $this->stats[$query_name][$catalog_alias]['total_count'] = $catalog_total_count;
+        $this->stats[$query_name][$catalog_alias]['processed_count'] = $catalog_processed_count;
 
-      $this->catalogs[$catalog_alias]['name'] = $catalog_name;
-      $this->catalogs[$catalog_alias]['stats'] = $catalog_stats;
-      $this->catalogs[$catalog_alias]['layout'] = $catalog_layout;
-      $this->catalogs[$catalog_alias]['total_count'] = $catalog_total_count;
-      $this->catalogs[$catalog_alias]['processed_count'] = $catalog_processed_count;
+        $all_processed_count += $catalog_processed_count;
+        $all_total_count += $catalog_total_count;
+      }
 
-      $all_processed_count += $catalog_processed_count;
-      $all_total_count += $catalog_total_count;
+      $this->stats[$query_name]['ALL']['name'] = $this->_settings['all_catalogs_label'];
+      $this->stats[$query_name]['ALL']['stats'] = $all_stats;
+      $this->stats[$query_name]['ALL']['layout'] = $all_layout;
+      $this->stats[$query_name]['ALL']['total_count'] = $all_total_count;
+      $this->stats[$query_name]['ALL']['processed_count'] = $all_processed_count;
     }
 
-    $this->catalogs['ALL']['name'] = $this->_settings['all_catalogs_label'];
-    $this->catalogs['ALL']['stats'] = $all_stats;
-    $this->catalogs['ALL']['layout'] = $all_layout;
-    $this->catalogs['ALL']['total_count'] = $all_total_count;
-    $this->catalogs['ALL']['processed_count'] = $all_processed_count;
   }
 
   protected function addAssetToCatalog(&$catalog_stats, &$catalog_layout, $uid, $value) {
@@ -321,7 +335,7 @@ class CIPDashboardDaemon {
       // data_version is a running number incremented by one
       // every time the structure of $document changes
       'data_version' => CIPDashboardDaemon::DATA_VERSION,
-      'catalogs' => $this->catalogs
+      'stats' => $this->stats
     );
 
     file_put_contents('daemon-dump.txt', print_r($document, TRUE));

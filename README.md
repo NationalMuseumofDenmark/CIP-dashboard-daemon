@@ -31,6 +31,16 @@ A pseudo-catalog containing combined statistics for all the catalogs you have
 specified will be saved with a catalog alias of `ALL` and the with the name
 specified under `all_catalogs_label` in `conf.json`.
 
+Custom queries
+--------------
+The daemon can also gather statistic on custom Cumulus queries (instead of
+simply gathering statistics on the full database). These are specified
+in `conf.json` under the key `queries`. Please see `conf.example.json`.
+
+Every query will be run for every catalog and the queries are sent directly to
+the CIP without modification. The queries you specify should therefore follow
+the _Cumulus Query Format_.
+
 Dependencies
 ------------
 This tool depends on PHP 5.x with lib cURL installed (+ the pecl tool depends the installation of the php-pear package)

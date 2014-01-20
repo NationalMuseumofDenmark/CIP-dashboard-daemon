@@ -4,5 +4,9 @@
   "catalogs": {
     "My catalog name": "mycatalogalias1",
     "Ye olde catalog": "ye-olde-catalog-alias"
+  },
+  "queries": {
+    "ALL": "\"Record Name\" * or \"Record Name\" !*",
+    "from-2014": "(\"Record Name\" * or \"Record Name\" !*) and \"Asset Creation Date\" >= 2014-01-01"
   }
 }
